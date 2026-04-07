@@ -24,7 +24,7 @@ resource "aws_eks_node_group" "node_group" {
   subnet_ids      = aws_subnet.private_subnet[*].id
 
   instance_types = ["g4dn.xlarge"]
-  ami_type       = "AL2_x86_64_GPU"
+  ami_type       = "AL2023_x86_64_NVIDIA"
 
   scaling_config {
     desired_size = 1
