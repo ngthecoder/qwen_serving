@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen-app
+  template:
+    metadata:
+      labels:
+        app: qwen-app
+    spec:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: qwen-app-containers
+          image: 891376949363.dkr.ecr.us-east-1.amazonaws.com/qwen-serving-ecr-repo:latest
+          imagePullPolicy: Always
+          env:
+            - name: MODEL_NAME
+              value: "Qwen/Qwen2-1.5B-Instruct"
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              memory: "8Gi"
+              cpu: "1000m"
+            requests:
+              nvidia.com/gpu: 1
+              memory: "8Gi"
+              cpu: "1000m"
