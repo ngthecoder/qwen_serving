@@ -3,7 +3,9 @@ from fastapi import FastAPI
 import uvicorn
 import os
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from threading import Thread
+from fastapi.responses import StreamingResponse
 
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2-1.5B-Instruct")
 
@@ -57,10 +59,34 @@ def sync(request: Request):
         "response": response
     }
 
+def response_streamer(message: str):
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": message},
+    ]
+
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+
+    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=20)
+
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+
+    thread.start()
+    
+    for new_text in streamer:
+        yield f"data: {new_text}\n\n"
+
 @app.post("/chat")
 def stream(request: Request):
-    # yet to be developed
-    pass
+    return StreamingResponse(response_streamer(request.message), media_type="text/event-stream")
 
 if __name__ == "__main__":
     uvicorn.run(app, host='0.0.0.0', port=8080)
