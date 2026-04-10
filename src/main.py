@@ -75,10 +75,10 @@ def sync(request: Request):
         "response": response
     }
 
-def response_streamer(ruquest: Request):
+def response_streamer(request: Request):
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": ruquest.message},
+        {"role": "user", "content": request.message},
     ]
 
     text = tokenizer.apply_chat_template(
@@ -91,7 +91,7 @@ def response_streamer(ruquest: Request):
 
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=ruquest.max_token)
+    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=request.max_token)
 
     thread = Thread(target=model.generate, kwargs=generation_kwargs)
 
@@ -105,7 +105,7 @@ def response_streamer(ruquest: Request):
 
 @app.post("/chat")
 def stream(request: Request):
-    return StreamingResponse(response_streamer(request.message), media_type="text/event-stream")
+    return StreamingResponse(response_streamer(request), media_type="text/event-stream")
 
 if __name__ == "__main__":
     uvicorn.run(app, host='0.0.0.0', port=8080)
