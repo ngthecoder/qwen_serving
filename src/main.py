@@ -37,7 +37,7 @@ app = FastAPI()
 
 class Request(BaseModel):
     message: str
-    max_token: int
+    max_tokens: int
 
 @app.get("/ping")
 def ping():
@@ -62,7 +62,7 @@ def sync(request: Request):
 
     generated_ids = model.generate(
         **model_inputs,
-        max_new_tokens=request.max_token,
+        max_new_tokens=request.max_tokens,
     )
 
     generated_ids = [
@@ -91,7 +91,7 @@ def response_streamer(request: Request):
 
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
 
-    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=request.max_token)
+    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=request.max_tokens)
 
     thread = Thread(target=model.generate, kwargs=generation_kwargs)
 
