@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: qwen-service-bare
+  name: qwen-service-vllm
 spec:
   type: LoadBalancer
   selector:
-    app: qwen-app-bare
+    app: qwen-app-vllm
   ports:
     - port: 8000
       targetPort: 8000
