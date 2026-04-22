@@ -1,40 +1,46 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: qwen-deployment
+  name: qwen-deployment-vllm
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: qwen-app
+      app: qwen-app-vllm
   template:
     metadata:
       labels:
-        app: qwen-app
+        app: qwen-app-vllm
     spec:
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
       containers:
-        - name: qwen-app-containers
-          image: 891376949363.dkr.ecr.us-east-1.amazonaws.com/qwen-serving-ecr-repo:latest
+        - name: qwen-app-vllm-container
+          image: IMAGE_NAME
           imagePullPolicy: Always
-          env:
-            - name: MODEL_NAME
-              value: "Qwen/Qwen2-1.5B-Instruct"
+          args:
+            - --model
+            - Qwen/Qwen2-1.5B-Instruct
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --max-model-len
+            - "2048"
           ports:
-            - containerPort: 8080
+            - containerPort: 8000
           livenessProbe:
             httpGet:
-              path: /ping
-              port: 8080
+              path: /health
+              port: 8000
             initialDelaySeconds: 60
             periodSeconds: 15
           readinessProbe:
             httpGet:
-              path: /ping
-              port: 8080
+              path: /health
+              port: 8000
             initialDelaySeconds: 60
             periodSeconds: 15
           resources:

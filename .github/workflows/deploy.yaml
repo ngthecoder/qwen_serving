@@ -1,0 +1,51 @@
+name: aws_ecr
+
+on:
+  push:
+    branches: [ main, vllm ]
+    paths:
+      - "k8s/**"
+      - "src/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  job_1:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        target: [ bare, vllm ]
+
+    env:
+      IMAGE_TAG: ${{ matrix.target }}-${{ github.sha }}
+
+    steps:
+      - name: Clone Repo
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Get Identity
+        run: aws sts get-caller-identity
+
+      - name: ECR Login
+        run: aws ecr get-login-password --region us-east-1 | docker login --username AWS
+          --password-stdin ${{ secrets.ECR_REPO_URL }}
+
+      - name: Build Image
+        run: docker build -t qwen-serving:$IMAGE_TAG ./src/${{ matrix.target }}
+
+      - name: Tag Image
+        run: docker tag qwen-serving:$IMAGE_TAG ${{ secrets.ECR_REPO_URL }}:$IMAGE_TAG
+
+      - name: Push Image
+        run: docker push ${{ secrets.ECR_REPO_URL }}:$IMAGE_TAG
