@@ -18,7 +18,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: qwen-app-vllm-container
-          image: <TBD>
+          image: IMAGE_NAME
           imagePullPolicy: Always
           args:
             - --model

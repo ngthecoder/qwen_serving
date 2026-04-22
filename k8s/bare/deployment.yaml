@@ -18,7 +18,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: qwen-app-bare-containers
-          image: 891376949363.dkr.ecr.us-east-1.amazonaws.com/qwen-serving-ecr-repo:latest
+          image: IMAGE_NAME
           imagePullPolicy: Always
           env:
             - name: MODEL_NAME
