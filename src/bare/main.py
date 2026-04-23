@@ -53,6 +53,10 @@ class OpenAIRequest(BaseModel):
     temperature: Optional[float] = None
     ignore_eos: Optional[bool] = False
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+    
 @app.get("/ping")
 def ping():
     return {
