@@ -1,35 +1,22 @@
-from pydantic import ConfigDict
-from typing import Any, Optional
-from fastapi import HTTPException
-from pydantic import BaseModel
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 from threading import Thread
-from fastapi.responses import StreamingResponse
 import logging
 import json
+from typing import List, Literal, Optional, Union
+from pydantic import BaseModel, ConfigDict
 
-logging.basicConfig(
-    filename="vram.log",
-    level=logging.INFO,
-    format="%(asctime)s %(message)s"
-)
-
-def log_vram(label):
-    used = torch.cuda.memory_allocated() / 1024**3
-    logging.info(f"[VRAM] {label}: {used:.2f} GB")
-
-log_vram("Initialized")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2-1.5B-Instruct")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     dtype=torch.bfloat16,
@@ -37,28 +24,45 @@ model = AutoModelForCausalLM.from_pretrained(
     attn_implementation="sdpa"
 )
 
-log_vram("After model load")
-
 app = FastAPI()
 
-logging.basicConfig(level=logging.INFO)
+# --- Schemas ---
+class TextContentPart(BaseModel):
+    type: Literal["text"]
+    text: str
 
-logger = logging.getLogger(__name__)
-
-class Request(BaseModel):
-    message: str
-    max_tokens: int
+class Message(BaseModel):
+    role: str
+    content: Union[str, List[TextContentPart]]
 
 class OpenAIRequest(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     model: str
-    messages: list[dict[str, Any]]
+    messages: List[Message]
     stream: bool = True
     max_tokens: Optional[int] = 256
     temperature: Optional[float] = None
     ignore_eos: Optional[bool] = False
 
+# --- Helpers ---
+def normalize_messages(messages: List[Message]) -> List[dict]:
+    """
+    OpenAI spec allows `content` to be either a string or a list of content
+    parts (for multimodal inputs). Qwen's chat template only handles strings,
+    so we flatten any list-form content into a single string by concatenating
+    all text parts.
+    """
+    normalized = []
+    for message in messages:
+        if isinstance(message.content, list):
+            text = "".join(part.text for part in message.content)
+            normalized.append({"role": message.role, "content": text})
+        else:
+            normalized.append({"role": message.role, "content": message.content})
+    return normalized
+
+# --- Exception handlers ---
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     body = await request.body()
@@ -70,77 +74,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors(), "body": body.decode()}
     )
 
+
+# --- Endpoints ---
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 @app.get("/ping")
 def ping():
-    return {
-        "text": "pong"
-    }
-
-@app.post("/chat/sync")
-def sync(request: Request):
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": request.message},
-    ]
-
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
-    generated_ids = model.generate(
-        **model_inputs,
-        max_new_tokens=request.max_tokens,
-    )
-
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-    return {
-        "response": response
-    }
-
-def response_streamer(request: Request):
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": request.message},
-    ]
-
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-
-    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=request.max_tokens)
-
-    thread = Thread(target=model.generate, kwargs=generation_kwargs)
-
-    thread.start()
-    
-    for i, new_text in enumerate(streamer):
-        log_vram(f"During text generation (loop#{i})")
-        yield f"data: {new_text}\n\n"
-    
-    log_vram("After text generation")
-
-@app.post("/chat")
-def stream(request: Request):
-    return StreamingResponse(response_streamer(request), media_type="text/event-stream")
+    return {"text": "pong"}
 
 @app.get("/v1/models")
 def models():
@@ -156,61 +98,57 @@ def models():
         ]
     }
 
-def openai_response_sync(request: OpenAIRequest):
+def openai_response_streamer(req: OpenAIRequest):
+    normalized = normalize_messages(req.messages)
+
     text = tokenizer.apply_chat_template(
-        request.messages,
+        normalized,
         tokenize=False,
         add_generation_prompt=True
     )
 
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
-    generated_ids = model.generate(
-        **model_inputs,
-        max_new_tokens=request.max_tokens,
+    streamer = TextIteratorStreamer(
+        tokenizer, skip_prompt=True, skip_special_tokens=True
     )
 
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-
-    response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-    return {
-        "response": response
-    }
-
-def openai_response_streamer(request: OpenAIRequest):
-    text = tokenizer.apply_chat_template(
-        request.messages,
-        tokenize=False,
-        add_generation_prompt=True
+    generation_kwargs = dict(
+        model_inputs,
+        streamer=streamer,
+        max_new_tokens=req.max_tokens
     )
-
-    model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
-
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-
-    generation_kwargs = dict(model_inputs, streamer=streamer, max_new_tokens=request.max_tokens)
 
     thread = Thread(target=model.generate, kwargs=generation_kwargs)
-
     thread.start()
-    
-    for i, new_text in enumerate(streamer):
-        chunk = {"id": "...", "choices": [{"index": 0, "delta": {"content": new_text}, "finish_reason": None}]}
+
+    for new_text in streamer:
+        chunk = {
+            "id": "...",
+            "choices": [
+                {"index": 0, "delta": {"content": new_text}, "finish_reason": None}
+            ]
+        }
         yield f"data: {json.dumps(chunk)}\n\n"
 
-    last_chunk = {"id": "...", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    last_chunk = {
+        "id": "...",
+        "choices": [
+            {"index": 0, "delta": {}, "finish_reason": "stop"}
+        ]
+    }
     yield f"data: {json.dumps(last_chunk)}\n\n"
     yield "data: [DONE]\n\n"
 
+
 @app.post("/v1/chat/completions")
-def chat_completion(request: OpenAIRequest):
-    if request.stream:
-        return StreamingResponse(openai_response_streamer(request), media_type="text/event-stream")
+def chat_completion(req: OpenAIRequest):
+    if req.stream:
+        return StreamingResponse(
+            openai_response_streamer(req),
+            media_type="text/event-stream"
+        )
     else:
-        # return openai_response_sync(request)
         raise HTTPException(400, "Only streaming is supported")
 
 if __name__ == "__main__":
