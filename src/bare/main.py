@@ -1,8 +1,10 @@
 from pydantic import ConfigDict
-from typing import Optional
+from typing import Any, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import uvicorn
 import os
 import torch
@@ -39,6 +41,10 @@ log_vram("After model load")
 
 app = FastAPI()
 
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+
 class Request(BaseModel):
     message: str
     max_tokens: int
@@ -47,16 +53,27 @@ class OpenAIRequest(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     model: str
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     stream: bool = True
     max_tokens: Optional[int] = 256
     temperature: Optional[float] = None
     ignore_eos: Optional[bool] = False
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body = await request.body()
+    logger.error(f"Validation error at {request.url.path}")
+    logger.error(f"Errors: {exc.errors()}")
+    logger.error(f"Body: {body.decode()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": body.decode()}
+    )
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
-    
+
 @app.get("/ping")
 def ping():
     return {
