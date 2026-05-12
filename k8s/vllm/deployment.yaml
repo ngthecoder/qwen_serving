@@ -4,6 +4,8 @@ metadata:
   name: qwen-deployment-vllm
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: qwen-app-vllm
@@ -29,6 +31,8 @@ spec:
             - "8000"
             - --max-model-len
             - "2048"
+            - --max-num-seqs
+            - "64"
           ports:
             - containerPort: 8000
           livenessProbe:
