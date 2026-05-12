@@ -2,7 +2,7 @@ name: aws_ecr
 
 on:
   push:
-    branches: [ main, vllm ]
+    branches: [main, vllm_benchmark]
     paths:
       - "k8s/**"
       - "src/**"
@@ -19,7 +19,7 @@ jobs:
 
     strategy:
       matrix:
-        target: [ bare, vllm ]
+        target: [bare, vllm]
 
     env:
       IMAGE_TAG: ${{ matrix.target }}-${{ github.sha }}
@@ -38,7 +38,8 @@ jobs:
         run: aws sts get-caller-identity
 
       - name: ECR Login
-        run: aws ecr get-login-password --region us-east-1 | docker login --username AWS
+        run:
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS
           --password-stdin ${{ secrets.ECR_REPO_URL }}
 
       - name: Build Image
